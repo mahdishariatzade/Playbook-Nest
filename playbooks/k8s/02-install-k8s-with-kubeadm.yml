@@ -3,11 +3,37 @@
   hosts: all
   become: yes
   tasks:
-    - name: Add Kubernetes apt key
+    - name: خواندن محتوای فعلی resolv.conf
+      slurp:
+        src: /etc/resolv.conf
+      register: original_resolv_conf  # ذخیره محتوای اولیه
+
+    - name: تنظیم موقت سرور DNS
+      lineinfile:
+        path: /etc/resolv.conf
+        line: "nameserver 185.51.200.2"  # سرور DNS موقت
+        state: present
+        insertbefore: "^nameserver"  # قرار دادن در بالای لیست
+      register: dns_set  # ثبت تغییرات
+
+    - name: اضافه کردن کلید APT کوبرنتیز
       apt_key:
         url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
         state: present
-      changed_when: false # This module is inherently idempotent
+      register: add_apt_key
+      until: add_apt_key is success  # تلاش تا موفقیت
+      retries: 5  # حداکثر 5 تلاش
+      delay: 10   # فاصله 10 ثانیه بین تلاش‌ها
+      when: dns_set.changed  # فقط در صورت تغییر DNS
+
+    - name: بازگرداندن resolv.conf به حالت اولیه
+      copy:
+        content: "{{ original_resolv_conf['content'] | b64decode }}"
+        dest: /etc/resolv.conf
+        owner: root
+        group: root
+        mode: '0644'
+      when: dns_set.changed  # فقط در صورت تغییر DNS
 
     - name: Add Kubernetes apt repository
       apt_repository:
