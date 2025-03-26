@@ -2,44 +2,63 @@
 - name: Setup all nodes
   hosts: all
   become: yes
+  vars:
+    version: v1.32
   tasks:
-    - name: خواندن محتوای فعلی resolv.conf
+    - name: Read current content of resolv.conf
       slurp:
         src: /etc/resolv.conf
-      register: original_resolv_conf  # ذخیره محتوای اولیه
+      register: original_resolv_conf # Store the original content
 
-    - name: تنظیم موقت سرور DNS
-      lineinfile:
+    - name: Delete the file if it exists
+      ansible.builtin.file:
         path: /etc/resolv.conf
-        line: "nameserver 185.51.200.2"  # سرور DNS موقت
-        state: present
-        insertbefore: "^nameserver"  # قرار دادن در بالای لیست
-      register: dns_set  # ثبت تغییرات
+        state: absent
 
-    - name: اضافه کردن کلید APT کوبرنتیز
-      apt_key:
-        url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
-        state: present
+    - name: Create a new file with content
+      ansible.builtin.file:
+        path: /etc/resolv.conf
+        state: touch
+        mode: "0644"
+
+    - name: Add content to the file
+      ansible.builtin.copy:
+        content: |
+          nameserver 185.51.200.2
+          #nameserver 1.0.0.1
+        dest: /etc/resolv.conf
+      register: dns_set # Register changes
+    - name: debug
+      debug:
+        msg: "{{dns_set}}"
+    - name: Add Kubernetes APT key
+      command: >
+        /bin/sh -c
+        "curl -fsSL https://pkgs.k8s.io/core:/stable:/{{version}}/deb/Release.key |
+        gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg"
+      args:
+        creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
       register: add_apt_key
-      until: add_apt_key is success  # تلاش تا موفقیت
-      retries: 5  # حداکثر 5 تلاش
-      delay: 10   # فاصله 10 ثانیه بین تلاش‌ها
-      when: dns_set.changed  # فقط در صورت تغییر DNS
+      until: add_apt_key is success # Retry until success
+      retries: 5 # Maximum 5 attempts
+      delay: 10 # 10-second delay between attempts
+      when: dns_set.changed # Only if DNS was changed
 
-    - name: بازگرداندن resolv.conf به حالت اولیه
+    - name: Add Kubernetes apt repository
+      apt_repository:
+        repo: deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/{{version}}/deb/ /
+        state: present
+        filename: kubernetes
+      changed_when: false # This module is inherently idempotent
+
+    - name: Restore resolv.conf to original state
       copy:
         content: "{{ original_resolv_conf['content'] | b64decode }}"
         dest: /etc/resolv.conf
         owner: root
         group: root
-        mode: '0644'
-      when: dns_set.changed  # فقط در صورت تغییر DNS
-
-    - name: Add Kubernetes apt repository
-      apt_repository:
-        repo: deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.32/deb/ /
-        state: present
-      changed_when: false # This module is inherently idempotent
+        mode: "0644"
+      when: dns_set.changed # Only if DNS was changed
 
     - name: Install Kubernetes packages
       apt:
@@ -47,6 +66,7 @@
           - kubelet
           - kubeadm
           - kubectl
+          - containerd
         state: present
         update_cache: yes
       register: install_k8s_packages
@@ -69,6 +89,13 @@
         path: /etc/containerd/config.toml
       register: config_stat
 
+    - name: Ensure containerd config directory exists
+      ansible.builtin.file:
+        path: /etc/containerd
+        state: directory
+        mode: "0755"
+      register: dir_stat
+
     - name: Generate default containerd config if not exists
       shell: containerd config default > /etc/containerd/config.toml
       when: not config_stat.stat.exists
@@ -80,11 +107,13 @@
         path: /etc/containerd/config.toml
         marker: "# {mark} ANSIBLE MANAGED BLOCK for mirrors"
         block: |
-          [plugins."io.containerd.grpc.v1.cri".registry.mirrors]
-          {% for registry in registries_to_mirror %}
-            [plugins."io.containerd.grpc.v1.cri".registry.mirrors."{{ registry }}"]
-              endpoint = ["{{ mirror_registry }}"]
-          {% endfor %}
+          version = 2
+          [plugins."io.containerd.grpc.v1.cri".registry]
+            [plugins."io.containerd.grpc.v1.cri".registry.mirrors]
+            {% for registry in registries_to_mirror %}
+              [plugins."io.containerd.grpc.v1.cri".registry.mirrors."{{ registry }}"]
+                endpoint = ["https://{{ mirror_registry }}"]
+            {% endfor %}
           [plugins."io.containerd.grpc.v1.cri".registry.configs]
             [plugins."io.containerd.grpc.v1.cri".registry.configs."{{ mirror_registry }}".auth]
               username = "{{ mirror_username }}"
@@ -105,6 +134,34 @@
       stat:
         path: /etc/kubernetes/admin.conf
       register: admin_conf_stat
+
+    - name: بررسی نسخه cgroup
+      shell: stat -fc %T /sys/fs/cgroup/
+      register: cgroup_version
+      when: not admin_conf_stat.stat.exists
+    - name: غیرفعال کردن موقت Swap
+      shell: swapoff -a
+      when: cgroup_version.stdout in ['tmpfs', 'cgroup2fs'] # برای v1 و v2
+    - name: غیرفعال کردن دائمی Swap در fstab
+      lineinfile:
+        path: /etc/fstab
+        regexp: "^([^#].*swap.*)$"
+        line: '# \1'
+        backrefs: yes
+      when: cgroup_version.stdout in ['tmpfs', 'cgroup2fs'] # برای v1 و v2
+    - name: فعال کردن دائمی IP Forwarding
+      sysctl:
+        name: net.ipv4.ip_forward
+        value: "1"
+        state: present
+        reload: yes
+      when: not admin_conf_stat.stat.exists
+
+    - name: pull Kubernetes cluster images
+      command: kubeadm config images pull
+      register: kubeadm_pull_output
+      when: not admin_conf_stat.stat.exists
+      run_once: true
 
     - name: Initialize Kubernetes cluster
       command: kubeadm init --pod-network-cidr={{ pod_network_cidr }}
