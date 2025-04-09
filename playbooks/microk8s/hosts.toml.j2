@@ -1,0 +1,7 @@
+server = "{{ item }}"
+
+[host."{{ mirror_registry }}"]
+capabilities = ["pull", "resolve"]
+override_path = true
+  [host."https://{{ mirror_registry }}".header]
+  Authorization = "{{ auth_header }}"

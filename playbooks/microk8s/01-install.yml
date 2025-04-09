@@ -1,0 +1,75 @@
+- name: پیکربندی آینه‌ها برای رجیستری‌های معروف
+  hosts: all
+  remote_user: ubuntu
+  become: yes
+  vars:
+      k8s_version:
+      mirror_registry:
+      mirror_username:
+      mirror_password:
+      snap_install:
+          - microk8s
+          - kubectl
+      registries:
+          - docker.io
+          - registry-1.docker.io
+          - k8s.gcr.io
+          - registry.redhat.io
+          - ghcr.io
+          - registry.k8s.io
+  tasks:
+      - name: install snapd
+        apt:
+            name: snapd
+            state: present
+        # install snapd که پیش‌نیاز MicroK8s است
+
+      - name: install MicroK8s
+        snap:
+            name: '{{item}}'
+            classic: yes
+            channel: '{{k8s_version}}'
+        loop: '{{snap_install}}'
+
+      - name: اضافه کردن کاربر به گروه microk8s
+        user:
+            name: '{{ ansible_user }}'
+            groups: microk8s
+            append: yes
+        # اضافه کردن کاربر به گروه microk8s برای دسترسی به دستورات
+
+      - name: ایجاد دایرکتوری .kube
+        file:
+            path: '$HOME/.kube'
+            state: directory
+            mode: '0700'
+            owner: '{{ ansible_user }}'
+            group: '{{ ansible_user }}'
+
+      - name: copy kubectl config
+        shell: microk8s config > $HOME/.kube/config
+        # ایجاد دایرکتوری .kube با مجوزهای مناسب
+
+      - name: ایجاد دایرکتوری برای هر رجیستری
+        file:
+            path: '/var/snap/microk8s/current/args/certs.d/{{ item }}'
+            state: directory
+            mode: '0755'
+        loop: '{{ registries }}'
+        # ایجاد دایرکتوری برای هر رجیستری
+
+      - name: Generate base64 encoded credentials
+        set_fact:
+            auth_header: "Basic {{ (mirror_username + ':' + mirror_password) | b64encode }}"
+
+      - name: ایجاد فایل hosts.toml برای هر رجیستری با احراز هویت
+        template:
+            src: './hosts.toml.j2'
+            dest: '/var/snap/microk8s/current/args/certs.d/{{ item }}/hosts.toml'
+            mode: '0644'
+        loop: '{{ registries }}'
+        # تنظیم آینه و احراز هویت برای هر رجیستری
+      - name: restart microk8s
+        shell: |
+            microk8s stop &&
+            microk8s start
