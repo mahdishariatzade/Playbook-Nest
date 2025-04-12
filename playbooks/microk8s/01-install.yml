@@ -13,6 +13,7 @@
       registries:
           - docker.io
           - registry-1.docker.io
+          - registry.gitlab.com
           - k8s.gcr.io
           - registry.redhat.io
           - ghcr.io
