@@ -1,0 +1,50 @@
+---
+- name: Create GitLab Runner and register with hostname tag
+  hosts: all
+  vars:
+      gitlab_url: 'https://your-gitlab-instance.com'
+      gitlab_access_token: 'your_personal_access_token'
+      runner_image: 'gitlab/gitlab-runner:latest'
+      runner_name: 'docker-runner-{{ inventory_hostname }}'
+      runner_tags: '{{ inventory_hostname }}'
+  tasks:
+      - name: Create a new runner token
+        uri:
+            url: '{{ gitlab_url }}/api/v4/runners'
+            method: POST
+            headers:
+                PRIVATE-TOKEN: '{{ gitlab_access_token }}'
+            body_format: json
+            body:
+                description: '{{ runner_name }}'
+                tag_list: '{{ runner_tags }}'
+                run_untagged: true
+                locked: false
+            status_code: 201
+        register: runner_token_response
+        delegate_to: localhost
+
+      - name: Extract runner token
+        set_fact:
+            runner_token: '{{ runner_token_response.json.token }}'
+
+      - name: Run GitLab Runner container
+        docker_container:
+            name: '{{ runner_name }}'
+            image: '{{ runner_image }}'
+            state: started
+            restart_policy: always
+            volumes:
+                - /var/run/docker.sock:/var/run/docker.sock
+                - /srv/gitlab-runner/config:/etc/gitlab-runner
+            command: >
+                register
+                --non-interactive
+                --url "{{ gitlab_url }}"
+                --registration-token "{{ runner_token }}"
+                --executor "docker"
+                --docker-image "alpine:latest"
+                --description "{{ runner_name }}"
+                --tag-list "{{ runner_tags }}"
+                --run-untagged="true"
+                --locked="false"
