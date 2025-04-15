@@ -1,7 +1,10 @@
+ingress:
+  enabled: true
+  hostname: {{ awx_hostname }}
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/rewrite-target: /
+  path: /
+  tls: []
 service:
-  type: NodePort
-  ports:
-    http:
-      nodePort: {{ awx_nodeport_http }}
-    https:
-      nodePort: {{ awx_nodeport_https }}
+  type: ClusterIP
