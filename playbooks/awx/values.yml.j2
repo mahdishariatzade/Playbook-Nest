@@ -1,0 +1,7 @@
+service:
+  type: NodePort
+  ports:
+    http:
+      nodePort: {{ awx_nodeport_http }}
+    https:
+      nodePort: {{ awx_nodeport_https }}

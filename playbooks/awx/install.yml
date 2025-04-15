@@ -1,0 +1,92 @@
+---
+- name: Install AWX on Kubernetes bare-metal cluster
+  hosts: k8s_nodes
+  become: yes
+  vars:
+      awx_namespace: 'awx'
+      awx_operator_version: '2.14.0'
+  tasks:
+      - name: Install required packages
+        package:
+            name: '{{ item }}'
+            state: present
+        loop:
+            - git
+            - curl
+
+      - name: Install kubectl (if not installed)
+        shell: |
+            if ! command -v kubectl &> /dev/null; then
+              curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+              chmod +x kubectl
+              mv kubectl /usr/local/bin/
+            fi
+        args:
+            creates: /usr/local/bin/kubectl
+
+      - name: Install Helm (if not installed)
+        shell: |
+            if ! command -v helm &> /dev/null; then
+              curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+            fi
+        args:
+            creates: /usr/local/bin/helm
+
+      - name: Add AWX Helm repository
+        shell: helm repo add awx-operator https://github.com/ansible/awx-operator
+        args:
+            creates: /root/.cache/helm/repository/awx-operator-index.yaml
+
+      - name: Update Helm repositories
+        shell: helm repo update
+
+      - name: Create AWX namespace
+        shell: kubectl create namespace {{ awx_namespace }}
+        ignore_errors: yes
+      - name: Create values.yml for AWX Operator
+        template:
+            src: values.yml.j2
+            dest: /tmp/values.yml
+
+      - name: Install AWX Operator with custom values
+        shell: |
+            helm upgrade --install awx-operator awx-operator/awx-operator \
+              --namespace {{ awx_namespace }} \
+              --version {{ awx_operator_version }} \
+              --values /tmp/values.yml
+
+      - name: Create AWX deployment YAML
+        copy:
+            content: |
+                ---
+                apiVersion: awx.ansible.com/v1beta1
+                kind: AWX
+                metadata:
+                  name: awx
+                  namespace: {{ awx_namespace }}
+                spec:
+                  service_type: ClusterIP
+                  ingress_type: ingress
+                  hostname: awx.example.com
+                  ingress_annotations:
+                    kubernetes.io/ingress.class: nginx
+                    nginx.ingress.kubernetes.io/rewrite-target: /
+            dest: /tmp/awx-deployment.yml
+
+      - name: Apply AWX deployment
+        shell: kubectl apply -f /tmp/awx-deployment.yml
+
+      - name: Wait for AWX to be ready
+        shell: kubectl get pods -n {{ awx_namespace }} -l app.kubernetes.io/name=awx
+        register: awx_pods
+        until: awx_pods.stdout.find("Running") != -1
+        retries: 20
+        delay: 30
+
+      - name: Get AWX admin password
+        shell: kubectl get secret awx-admin-password -n {{ awx_namespace }} -o jsonpath="{.data.password}" | base64 --decode
+        register: awx_password
+
+      - name: Display AWX admin password
+        debug:
+            msg: 'AWX admin password: {{ awx_password.stdout }}'
