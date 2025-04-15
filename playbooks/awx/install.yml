@@ -5,6 +5,7 @@
   vars:
       awx_namespace: 'awx'
       awx_operator_version: '2.14.0'
+      awx_hostname: awx.example.com
   tasks:
       - name: Install required packages
         package:
@@ -67,7 +68,7 @@
                 spec:
                   service_type: ClusterIP
                   ingress_type: ingress
-                  hostname: awx.example.com
+                  hostname: {{ awx_hostname }}
                   ingress_annotations:
                     kubernetes.io/ingress.class: nginx
                     nginx.ingress.kubernetes.io/rewrite-target: /
