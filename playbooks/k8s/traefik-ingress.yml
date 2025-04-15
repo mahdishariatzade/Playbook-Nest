@@ -1,0 +1,54 @@
+---
+- name: Configure Traefik ingress for Kubernetes bare-metal cluster
+  hosts: k8s_nodes
+  become: yes
+  vars:
+      traefik_namespace: 'traefik'
+      traefik_chart: 'traefik/traefik'
+  tasks:
+      - name: Open ports 30080 and 30443 on firewall
+        firewalld:
+            port: '{{ item }}'
+            permanent: yes
+            state: enabled
+        loop:
+            - 30080/tcp
+            - 30443/tcp
+
+      - name: Reload firewalld
+        systemd:
+            name: firewalld
+            state: reloaded
+
+      - name: Install Helm (if not installed)
+        shell: |
+            if ! command -v helm &> /dev/null; then
+              curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+            fi
+        args:
+            creates: /usr/local/bin/helm
+
+      - name: Add Traefik Helm repository
+        shell: helm repo add traefik https://helm.traefik.io/traefik
+        args:
+            creates: /root/.cache/helm/repository/traefik-index.yaml
+
+      - name: Update Helm repositories
+        shell: helm repo update
+
+      - name: Install or upgrade Traefik with custom ports
+        shell: |
+            helm upgrade --install traefik {{ traefik_chart }} \
+              --namespace {{ traefik_namespace }} \
+              --create-namespace \
+              --set ports.web.port=30080 \
+              --set ports.websecure.port=30443
+        args:
+            creates: /root/.cache/helm/repository/traefik-index.yaml
+
+      - name: Verify Traefik installation
+        shell: kubectl get pods -n {{ traefik_namespace }}
+        register: traefik_pods
+        until: traefik_pods.stdout.find("Running") != -1
+        retries: 5
+        delay: 10

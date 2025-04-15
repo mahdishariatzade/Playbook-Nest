@@ -1,0 +1,54 @@
+---
+- name: Configure Kubernetes bare-metal cluster for ingress
+  hosts: k8s_nodes
+  become: yes
+  vars:
+      ingress_controller_namespace: 'ingress-nginx'
+      ingress_controller_chart: 'ingress-nginx/ingress-nginx'
+  tasks:
+      - name: Open ports 30080 and 30443 on firewall
+        firewalld:
+            port: '{{ item }}'
+            permanent: yes
+            state: enabled
+        loop:
+            - 30080/tcp
+            - 30443/tcp
+
+      - name: Reload firewalld
+        systemd:
+            name: firewalld
+            state: reloaded
+
+      - name: Install Helm (if not installed)
+        shell: |
+            if ! command -v helm &> /dev/null; then
+              curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+            fi
+        args:
+            creates: /usr/local/bin/helm
+
+      - name: Add ingress-nginx Helm repository
+        shell: helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+        args:
+            creates: /root/.cache/helm/repository/ingress-nginx-index.yaml
+
+      - name: Update Helm repositories
+        shell: helm repo update
+
+      - name: Install or upgrade ingress-nginx with custom ports
+        shell: |
+            helm upgrade --install ingress-nginx {{ ingress_controller_chart }} \
+              --namespace {{ ingress_controller_namespace }} \
+              --create-namespace \
+              --set controller.service.ports.http=30080 \
+              --set controller.service.ports.https=30443
+        args:
+            creates: /root/.cache/helm/repository/ingress-nginx-index.yaml
+
+      - name: Verify ingress-nginx installation
+        shell: kubectl get pods -n {{ ingress_controller_namespace }}
+        register: ingress_pods
+        until: ingress_pods.stdout.find("Running") != -1
+        retries: 5
+        delay: 10
