@@ -29,7 +29,7 @@
             creates: /usr/local/bin/helm
 
       - name: Add Traefik Helm repository
-        shell: helm repo add traefik https://helm.traefik.io/traefik
+        shell: helm repo add traefik https://traefik.github.io/charts
         args:
             creates: /root/.cache/helm/repository/traefik-index.yaml
 
