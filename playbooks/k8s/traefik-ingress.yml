@@ -6,19 +6,19 @@
       traefik_namespace: 'traefik'
       traefik_chart: 'traefik/traefik'
   tasks:
-      - name: Open ports 30080 and 30443 on firewall
-        firewalld:
-            port: '{{ item }}'
-            permanent: yes
-            state: enabled
-        loop:
-            - 30080/tcp
-            - 30443/tcp
+      # - name: Open ports 30080 and 30443 on firewall
+      #   firewalld:
+      #       port: '{{ item }}'
+      #       permanent: yes
+      #       state: enabled
+      #   loop:
+      #       - 30080/tcp
+      #       - 30443/tcp
 
-      - name: Reload firewalld
-        systemd:
-            name: firewalld
-            state: reloaded
+      # - name: Reload firewalld
+      #   systemd:
+      #       name: firewalld
+      #       state: reloaded
 
       - name: Install Helm (if not installed)
         shell: |
