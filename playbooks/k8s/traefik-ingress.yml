@@ -1,6 +1,6 @@
 ---
 - name: Configure Traefik ingress for Kubernetes bare-metal cluster
-  hosts: k8s_nodes
+  hosts: all
   become: yes
   vars:
       traefik_namespace: 'traefik'

@@ -1,6 +1,6 @@
 ---
 - name: Configure Kubernetes bare-metal cluster for ingress
-  hosts: k8s_nodes
+  hosts: all
   become: yes
   vars:
       ingress_controller_namespace: 'ingress-nginx'
